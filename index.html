@@ -758,7 +758,7 @@ function units(p) {
   if (p.type === 'complex') {
     p.models.forEach(m => m.houses.forEach(h => out.push({
       id: h.id, no: h.no, label: 'منزل ' + h.no, color: m.color, group: m.name, model: m, house: h, w: wt(h),
-      stages: m.stages.map(s => ({ id: s.id, name: s.name, test: s.test, w: wt(s), cat: s.cat || '', pct: pct(h.prog[s.id]) }))
+      stages: hStages(m, h).map(s => ({ id: s.id, name: s.name, test: s.test, w: wt(s), cat: s.cat || '', pct: pct(h.prog[s.id]), ex: !!s.ex }))
     })));
     out.sort((a, b) => a.no - b.no);
   }
@@ -778,13 +778,14 @@ const projectPct = p => {
   }
   return +wavgX(units(p), u => wavgX(u.stages, s => s.pct, wt), wt).toFixed(2);
 };
-const housePct = (m, h) => wavg(m.stages, s => pct(h.prog[s.id]), wt);
-const modelPct = m => +wavgX(m.houses, h => wavgX(m.stages, s => pct(h.prog[s.id]), wt), wt).toFixed(2);
+const hStages = (m, h) => m.stages.concat(h.extra || []).map(s => h.wov && h.wov[s.id] !== undefined ? Object.assign({}, s, { w: +h.wov[s.id] }) : s);
+const housePct = (m, h) => wavg(hStages(m, h), s => pct(h.prog[s.id]), wt);
+const modelPct = m => +wavgX(m.houses, h => wavgX(hStages(m, h), s => pct(h.prog[s.id]), wt), wt).toFixed(2);
 const unitById = (p, id) => units(p).find(u => u.id === id);
 const nosRange = m => { if (!m.houses.length) return '-'; const n = m.houses.map(h => h.no); return Math.min(...n) + ' – ' + Math.max(...n); };
 function stageNames(p) {
   const names = [];
-  p.models.forEach(m => m.stages.forEach(s => { if (!names.includes(s.name)) names.push(s.name); }));
+  p.models.forEach(m => [...m.stages, ...m.houses.flatMap(h => h.extra || [])].forEach(s => { if (!names.includes(s.name)) names.push(s.name); }));
   return names;
 }
 
@@ -827,7 +828,7 @@ function setStagePct(p, u, stageId, val) {
     const old = pct(u.house.prog[stageId]);
     if (old === val) return false;
     if (val) u.house.prog[stageId] = val; else delete u.house.prog[stageId];
-    const s = u.model.stages.find(x => x.id === stageId);
+    const s = hStages(u.model, u.house).find(x => x.id === stageId);
     logP(p, { kind: 'prog', unitId: u.id, label: u.label, stage: s ? s.name : '', from: old, to: val });
     return true;
   }
@@ -1082,6 +1083,8 @@ function siteComplex(p) {
       <div class="row" style="margin-bottom:12px">
         <h3>المنازل</h3><span class="grow"></span>
         ${can('stages') ? '<button type="button" class="ghost sm" data-act="stages">الفقرات والأوزان</button>' : ''}
+        ${can('stages') ? '<button type="button" class="ghost sm" data-act="add-stage">+ إضافة فقرة</button>' : ''}
+        ${can('stages') ? '<button type="button" class="ghost sm" data-act="stage-weight">⚖️ تعديل وزن فقرة</button>' : ''}
         ${can('progress') ? '<button type="button" class="ghost sm" data-act="bulk">تحديث جماعي</button>' : ''}
         <button type="button" class="ghost sm" data-act="prog-print">🖨️ طباعة الإنجاز والفحوصات</button>
       </div>
@@ -1359,7 +1362,7 @@ function houseForm(p, u) {
     }
     return head + `<div class="hst"><div><b>${esc(s.name)}</b> <small class="muted">· ثقل ${wt(s)}</small>${tb}</div>
       <div class="rng"><input type="range" name="s_${s.id}" min="0" max="100" step="5" value="${s.pct}" ${pr ? '' : 'disabled'}><output>${s.pct}%</output>
-      ${pr ? `<button type="button" class="ghost sm" data-act="full" data-target="s_${s.id}">100%</button>` : ''}</div></div>`;
+      ${pr ? `<button type="button" class="ghost sm" data-act="full" data-target="s_${s.id}">100%</button>` : ''}${can('stages') ? `<button type="button" class="ghost sm" data-act="stage-weight" data-id="${u.id}" data-name="${esc(s.name)}" title="تعديل وزن هذه الفقرة">⚖️</button>` : ''}${s.ex && can('stages') ? `<button type="button" class="ghost sm" data-act="del-extra" data-id="${u.id}" data-sid="${s.id}" title="حذف هذه الفقرة من هذا المنزل">🗑</button>` : ''}</div></div>`;
   }).join('');
   return `<form data-form="house" data-id="${u.id}" class="stack">
     <div class="row"><span class="dot" style="background:${u.color}"></span><span class="muted small">${esc(u.group)} · ${u.model.area || '-'} م²</span><span class="grow"></span><b>${unitPct(u)}%</b></div>
@@ -1370,6 +1373,7 @@ function houseForm(p, u) {
     ${tests.length ? `<div class="tablewrap"><table><tbody>${tests.map(t => `<tr><td>${esc(t.c.name)}</td><td>${esc(t.r.date)}</td><td>${esc(t.r.result)}</td><td><span class="stsel st-${t.r.status}">${STATUS[t.r.status]}</span></td>
       <td><button type="button" class="fcount" data-act="rec-open" data-c="${t.c.id}" data-id="${t.r.id}">${t.r.files.length ? '📎 ' + t.r.files.length : 'عرض'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="muted small">لم تُسجل أي فحوصات لهذا المنزل بعد.</div>'}
     <div class="foot"><button type="button" class="ghost sm" data-act="ai-q" data-q="منزل ${u.no}">✦ اسأل المهندس الذكي</button>
+      ${can('stages') ? `<button type="button" class="ghost sm" data-act="add-stage-house" data-id="${u.id}">+ فقرة لهذا المنزل</button>` : ''}
       ${can('tests') ? `<button type="button" class="ghost sm" data-act="rec-new" data-unit="${esc(u.label)}">+ تسجيل فحص</button>` : ''}<span class="grow"></span>
       <button type="button" class="ghost" data-act="close">إغلاق</button>${pr ? '<button class="primary">حفظ</button>' : ''}</div>
   </form>`;
@@ -1403,6 +1407,44 @@ function buildingForm(p, b) {
       ${b ? `<button type="button" class="ghost sm" data-act="ai-q" data-q="${esc(b.name)}">✦ اسأل المهندس الذكي</button>` : ''}
       ${b && can('tests') ? `<button type="button" class="ghost sm" data-act="rec-new" data-unit="${esc(b.name)}">+ تسجيل فحص</button>` : ''}<span class="grow"></span>
       <button type="button" class="ghost" data-act="close">إغلاق</button>${edit || !b ? '<button class="primary">حفظ</button>' : ''}</div>
+  </form>`;
+}
+
+/* حقول النطاق المشتركة: كل منازل النموذج، أو منازل محددة، أو هذا المنزل فقط */
+function scopeFields(p, hid) {
+  const hs = units(p).filter(u => u.house);
+  const models = p.models.map(m => `<option value="${m.id}">${esc(m.name)} (${m.houses.length} منزل)</option>`).join('');
+  const boxes = hs.map(u => `<label class="chk"><input type="checkbox" name="h" value="${u.id}"> منزل ${u.no} · ${esc(u.group)}</label>`).join('');
+  const allRadio = `<label class="chk"><input type="radio" name="scope" value="all" ${hid ? '' : 'checked'}> كل منازل النموذج
+      <select name="model" style="margin-inline-start:8px"><option value="all">كل النماذج</option>${models}</select></label>`;
+  return hid
+    ? `${allRadio}<label class="chk"><input type="radio" name="scope" value="one" checked> هذا المنزل فقط</label><input type="hidden" name="h" value="${hid}">`
+    : `${allRadio}<label class="chk"><input type="radio" name="scope" value="sel"> منازل محددة (اختر من القائمة)</label>
+       <div class="grid2" style="max-height:220px;overflow:auto;gap:4px">${boxes || '<span class="muted small">لا توجد منازل</span>'}</div>`;
+}
+
+/* إضافة فقرة جديدة */
+function addStageForm(p, hid) {
+  return `<form data-form="addstage" class="stack">
+    <div class="grid2"><label>اسم الفقرة<input name="name" required placeholder="مثال: تركيب الأبواب"></label>
+      <label>الفحص المطلوب<select name="test">${catOptions(p, '')}</select></label></div>
+    <label>وزن الفقرة في الإنجاز<input name="w" type="text" inputmode="decimal" value="1"></label>
+    <p class="muted small" style="margin:0">الفقرة التي تُضاف للنموذج تظهر في كل منازله، والتي تُضاف لمنازل محددة تظهر فيها فقط، ويمكن حذفها من بطاقة المنزل.</p>
+    ${scopeFields(p, hid)}
+    <div class="foot"><span class="grow"></span><button type="button" class="ghost" data-act="close">إلغاء</button><button class="primary">إضافة الفقرة</button></div>
+  </form>`;
+}
+
+/* تعديل وزن فقرة بنفس النطاقات */
+function stageWeightForm(p, hid, name) {
+  const u = hid ? units(p).find(x => x.id === hid) : null;
+  const cur = u && name ? ((u.stages.find(s => s.name === name) || {}).w) : 1;
+  return `<form data-form="stageweight" class="stack">
+    <div class="grid2"><label>الفقرة<select name="stage">${stageNames(p).map(n => `<option ${n === name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      <label>الوزن الجديد<input name="w" type="text" inputmode="decimal" value="${fmtN(cur === undefined ? 1 : cur)}"></label></div>
+    <p class="muted small" style="margin:0">"كل منازل النموذج" يغيّر الوزن للكل ويلغي الاستثناءات. "منازل محددة" أو "هذا المنزل فقط" يغيّر الوزن لهذه المنازل فقط.</p>
+    ${scopeFields(p, hid)}
+    <div class="foot"><span class="grow"></span><button type="button" class="ghost" data-act="close">إلغاء</button><button class="primary">حفظ الوزن</button></div>
   </form>`;
 }
 
@@ -1501,7 +1543,8 @@ function progressReport(p) {
 function modelReport(p, m) {
   const us = units(p).filter(u => u.model === m);
   const out = [`**${m.name}** — ${m.houses.length} منزل (أرقام ${nosRange(m)})، مساحة ${m.area || '-'} م²`, `الإنجاز: **${modelPct(m)}%**`, 'الفقرات:'];
-  m.stages.forEach(s => { const v = us.map(u => pct(u.house.prog[s.id])); out.push(`- ${s.name}: ${avg(v)}% (${v.filter(x => x >= 100).length} منزل مكتمل)`); });
+  const names = [...new Set([...m.stages, ...m.houses.flatMap(h => h.extra || [])].map(s => s.name))];
+  names.forEach(nm => { const v = us.filter(u => u.stages.some(s => s.name === nm)).map(u => pct(u.house.prog[u.stages.find(s => s.name === nm).id])); out.push(`- ${nm}: ${avg(v)}% (${v.filter(x => x >= 100).length} منزل مكتمل)`); });
   return out.join('\n');
 }
 function testsReport(p) {
@@ -1549,7 +1592,7 @@ function aiContext(p) {
       L.push(`نموذج "${m.name}" | مساحة ${m.area || '-'} م² | ${m.houses.length} منزل (أرقام ${nosRange(m)}) | إنجاز ${modelPct(m)}% | الفقرات بالترتيب: ${m.stages.map(s => s.name + (s.test ? ' [تتطلب ' + catName(p, s.test) + ']' : '')).join('، ')}`);
       let idle = 0;
       m.houses.forEach(h => {
-        const parts = m.stages.filter(s => pct(h.prog[s.id]) > 0).map(s => `${s.name} ${pct(h.prog[s.id])}%`);
+        const parts = hStages(m, h).filter(s => pct(h.prog[s.id]) > 0).map(s => `${s.name} ${pct(h.prog[s.id])}%`);
         if (parts.length || h.note) L.push(`- منزل ${h.no}: ${parts.join('، ') || 'لم يبدأ'}${h.note ? ' | ملاحظة: ' + h.note : ''}`);
         else idle++;
       });
@@ -2176,6 +2219,7 @@ const ACT = {
         if (lot) houses++; else missing++;
         const prog = {};
         stages.forEach(s => { const v = lot && lot.stages ? adlPct(lot.stages[s.aid]) : 0; if (v) prog[s.id] = v; });
+        (h.extra || []).forEach(x => { if (h.prog[x.id] !== undefined) prog[x.id] = h.prog[x.id]; });
         h.prog = prog;
         h.w = Math.round(areaOf(h.no) * 100) / 100;
       });
@@ -2246,6 +2290,28 @@ const ACT = {
     logP(p, { kind: 'other', text: `حذف ${b.name}` });
     if (await saveDoc()) { closeModal(); render(); }
   },
+  'add-stage': () => {
+    if (!need('stages')) return;
+    if (!S.p.models.length) return toast('لا توجد نماذج', 'err');
+    openModal('إضافة فقرة', addStageForm(S.p, null));
+  },
+  'add-stage-house': d => { if (need('stages')) openModal('إضافة فقرة لهذا المنزل', addStageForm(S.p, d.id)); },
+  'del-extra': async d => {
+    if (!need('stages')) return;
+    const p = S.p, u = unitById(p, d.id);
+    if (!u || !u.house) return;
+    const s = (u.house.extra || []).find(x => x.id === d.sid);
+    if (!s || !confirm(`حذف الفقرة "${s.name}" من ${u.label}؟ (تُحذف معها نسبة الإنجاز المسجلة لها)`)) return;
+    u.house.extra = u.house.extra.filter(x => x.id !== d.sid);
+    delete u.house.prog[d.sid];
+    logP(p, { kind: 'stages', unitId: u.id, text: `حذف فقرة ${s.name} من ${u.label}` });
+    if (await saveDoc()) { closeModal(); render(); }
+  },
+  'stage-weight': d => {
+    if (!need('stages')) return;
+    if (!stageNames(S.p).length) return toast('لا توجد فقرات', 'err');
+    openModal('تعديل وزن فقرة', stageWeightForm(S.p, d.id || null, d.name || ''));
+  },
   'add-srow': (d, el) => { el.closest('form').querySelector('.slist').insertAdjacentHTML('beforeend', stageRow(S.p, { id: '', name: '', test: '', pct: 0 }, d.pct === '1')); },
   'del-srow': (d, el) => el.closest('.srow').remove(),
   up: (d, el) => moveRow(el, -1),
@@ -2271,7 +2337,7 @@ const ACT = {
     if (!c || !confirm(`حذف "${c.name}" وكل فحوصاته (${c.records.length})؟ (تُنقل إلى سلة المهملات مع ملفاتها)`)) return;
     await trashPut('cat', c.name, { item: { id: c.id, name: c.name }, records: c.records.map(recRowOf(p.id)) }, p.id);
     p.testCats = p.testCats.filter(x => x.id !== c.id);
-    p.models.forEach(m => m.stages.forEach(s => { if (s.test === c.id) s.test = ''; }));
+    p.models.forEach(m => [...m.stages, ...m.houses.flatMap(h => h.extra || [])].forEach(s => { if (s.test === c.id) s.test = ''; }));
     p.buildings.forEach(b => b.stages.forEach(s => { if (s.test === c.id) s.test = ''; }));
     logP(p, { kind: 'other', text: `حذف صنف الفحص ${c.name}` });
     if (!(await saveDoc())) return;
@@ -2492,6 +2558,73 @@ const FORMS = {
     else if (area > 0) m.houses.forEach(h => { h.w = area; });
     logP(p, { kind: 'other', text: isNew ? `أضاف النموذج ${name} (${count} منزل)` : `عدّل النموذج ${name}` });
     if (await saveDoc()) { closeModal(); render(); }
+  },
+
+  stageweight: async (fd, f) => {
+    if (!need('stages')) return;
+    const p = S.p, name = fd.get('stage') || '';
+    const wv = toLatin(String(fd.get('w') || '')).replace(/[,،٫]/g, '.').trim();
+    if (wv === '' || isNaN(parseFloat(wv))) return toast('اكتب وزناً صحيحاً', 'err');
+    const w = Math.max(0, parseFloat(wv));
+    const scope = fd.get('scope') || 'all';
+    let n = 0;
+    if (scope === 'all') {
+      const ms = fd.get('model') === 'all' ? p.models : [getM(p, fd.get('model'))].filter(Boolean);
+      if (!ms.length) return toast('اختر النموذج', 'err');
+      ms.forEach(m => {
+        m.stages.forEach(s => { if (s.name === name && wt(s) !== w) { s.w = w; n++; } });
+        m.houses.forEach(h => {
+          const sids = new Set(m.stages.concat(h.extra || []).filter(s => s.name === name).map(s => s.id));
+          (h.extra || []).forEach(s => { if (s.name === name && wt(s) !== w) { s.w = w; n++; } });
+          if (h.wov) sids.forEach(sid => { delete h.wov[sid]; });
+        });
+      });
+      logP(p, { kind: 'stages', text: `غيّر وزن فقرة "${name}" إلى ${fmtN(w)} لكل المنازل` });
+    } else {
+      const ids = new Set(fd.getAll('h'));
+      units(p).filter(u => u.house && ids.has(u.id)).forEach(u => {
+        const h = u.house, s = hStages(u.model, h).find(x => x.name === name);
+        if (!s) return;
+        h.wov = Object.assign({}, h.wov || {}, { [s.id]: w }); n++;
+      });
+      if (!n) return toast('لا توجد فقرة بهذا الاسم في المنازل المختارة', 'err');
+      logP(p, { kind: 'stages', text: `غيّر وزن فقرة "${name}" إلى ${fmtN(w)} في ${n} منزل` });
+    }
+    if (!n) { closeModal(); return toast('لا توجد تغييرات'); }
+    if (await saveDoc()) { closeModal(); render(); toast(`تم تحديث وزن "${name}" في ${n} ${scope === 'all' ? 'عنصر' : 'منزل'}`, 'ok'); }
+  },
+
+  addstage: async (fd, f) => {
+    if (!need('stages')) return;
+    const p = S.p;
+    const name = (fd.get('name') || '').trim();
+    if (!name) return toast('اكتب اسم الفقرة', 'err');
+    const test = fd.get('test') || '';
+    const wv = toLatin(String(fd.get('w') || '')).replace(/[,،٫]/g, '.').trim();
+    const w = wv === '' || isNaN(parseFloat(wv)) ? 1 : Math.max(0, parseFloat(wv));
+    const scope = fd.get('scope') || 'all';
+    let n = 0, skipped = 0;
+    if (scope === 'all') {
+      const ms = fd.get('model') === 'all' ? p.models : [getM(p, fd.get('model'))].filter(Boolean);
+      if (!ms.length) return toast('اختر النموذج', 'err');
+      ms.forEach(m => {
+        if (m.stages.some(s => s.name === name)) { skipped++; return; }
+        m.stages.push({ id: uid(), name, test, w, cat: '' }); n++;
+      });
+      if (!n) return toast(`الفقرة "${name}" موجودة بالفعل في هذا النموذج`, 'err');
+      logP(p, { kind: 'stages', text: `أضاف فقرة "${name}" لكل منازل ${ms.length > 1 ? 'المشروع' : ms[0].name}` });
+    } else {
+      const ids = new Set(fd.getAll('h'));
+      const sid = uid();
+      units(p).filter(u => u.house && ids.has(u.id)).forEach(u => {
+        const h = u.house;
+        if (hStages(u.model, h).some(s => s.name === name)) { skipped++; return; }
+        h.extra = (h.extra || []).concat([{ id: sid, name, test, w, cat: '', ex: true }]); n++;
+      });
+      if (!n) return toast(skipped ? `الفقرة "${name}" موجودة بالفعل في المنازل المختارة` : 'اختر منزلاً واحداً على الأقل', 'err');
+      logP(p, { kind: 'stages', text: `أضاف فقرة "${name}" إلى ${n} منزل` });
+    }
+    if (await saveDoc()) { closeModal(); render(); toast(`أُضيفت "${name}" إلى ${n} ${scope === 'all' ? 'نموذج' : 'منزل'}${skipped ? ` (تخطّي ${skipped} لوجود فقرة بنفس الاسم)` : ''}`, 'ok'); }
   },
 
   stages: async (fd, f) => {
@@ -2749,14 +2882,15 @@ function lock(on) {
 
 /* ================= حركات GSAP (اختيارية: تعمل فقط إذا تم تحميل المكتبة) ================= */
 const motionOK = () => !!window.gsap && !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+const hasEl = sel => !!document.querySelector(sel); // GSAP يطلع تحذير إذا الهدف غير موجود (مثلاً شاشة الدخول)
 const _render = render;
 render = function () {
   _render();
   if (!motionOK()) return;
-  gsap.fromTo('#app .ohead, #app .side', { opacity: 0, y: -28, scale: .98 }, { opacity: 1, y: 0, scale: 1, duration: .7, ease: 'expo.out', clearProps: 'transform,opacity' });
-  gsap.fromTo('#app .card, #app .tile, #app .lg, #app .pick-card', { opacity: 0, y: 40, filter: 'blur(6px)' },
+  if (hasEl('#app .ohead, #app .side')) gsap.fromTo('#app .ohead, #app .side', { opacity: 0, y: -28, scale: .98 }, { opacity: 1, y: 0, scale: 1, duration: .7, ease: 'expo.out', clearProps: 'transform,opacity' });
+  if (hasEl('#app .card, #app .tile, #app .lg, #app .pick-card')) gsap.fromTo('#app .card, #app .tile, #app .lg, #app .pick-card', { opacity: 0, y: 40, filter: 'blur(6px)' },
     { opacity: 1, y: 0, filter: 'blur(0px)', duration: .7, ease: 'expo.out', stagger: .07, delay: .15, clearProps: 'transform,opacity,filter' });
-  gsap.from('#app .bar i', { width: 0, duration: .9, ease: 'power2.out', stagger: .04 });
+  if (hasEl('#app .bar i')) gsap.from('#app .bar i', { width: 0, duration: .9, ease: 'power2.out', stagger: .04 });
   document.querySelectorAll('#app .tile b').forEach(el => {
     const t = el.textContent.trim();
     if (!/^\d+(\.\d+)?$/.test(t)) return;
@@ -2767,7 +2901,7 @@ render = function () {
 const _openModal = openModal;
 openModal = function (t, h) {
   _openModal(t, h);
-  if (motionOK()) gsap.fromTo('#mbody', { opacity: 0, y: 10 },
+  if (motionOK() && hasEl('#mbody')) gsap.fromTo('#mbody', { opacity: 0, y: 10 },
     { opacity: 1, y: 0, duration: .3, ease: 'power2.out', clearProps: 'transform,opacity' });
 };
 
